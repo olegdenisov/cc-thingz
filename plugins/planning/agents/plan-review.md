@@ -39,7 +39,7 @@ Key rules from the plan template:
 - Each task MUST end with writing/updating tests before moving to next
 - Tests are separate checklist items, not bundled with implementation
 - "run tests - must pass before next task" present in each task
-- Each task has a `**Model:** <haiku|sonnet|opus> — <reason>` line matching the "task model selection" rubric: flag opus-signal tasks (async/concurrency, contracts later tasks rely on, security, 4+ files of shared logic) marked haiku/sonnet, and haiku on anything beyond mechanical 1-2 file work
+- Each task has a `**Model:** <haiku|sonnet|opus> — <reason>` line matching the "task model selection" rubric: flag haiku/sonnet on tasks with an opus signal (decision the plan leaves open, contract later tasks build on, mistake that passes its own checks, behavior shared across modules), haiku on anything the plan does not spell out exactly, opus with none of those signals, and `fable` the user did not ask for
 
 ## Review Workflow
 

@@ -219,7 +219,7 @@ Task structure guidelines:
 Example (NOTICE: Files block + tests as separate checklist items):
 
 ### Task 1: Add password hashing utility
-**Model:** sonnet — new utility with tests, clear spec
+**Model:** sonnet — clear spec, tests show if it works
 
 **Files:**
 - Create: `src/auth/hash`
@@ -262,7 +262,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 
 <!-- replace "N-1" and "N" below with the actual next sequential numbers continuing from your last implementation task - do NOT emit the literal letter N -->
 ### Task N-1: Verify acceptance criteria
-**Model:** sonnet — acceptance check needs care
+**Model:** sonnet — checks the result against the plan, fixes gaps
 - [ ] verify all requirements from Overview are implemented
 - [ ] verify edge cases are handled
 - [ ] run full test suite: `<project test command>`
@@ -270,7 +270,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 - [ ] verify test coverage meets project standard
 
 ### Task N: [Final] Update documentation
-**Model:** sonnet — docs must match what was actually built
+**Model:** sonnet — docs describe built behavior
 - [ ] update README.md if needed
 - [ ] update CLAUDE.md if new patterns discovered
 - [ ] move this plan to `docs/plans/completed/`
@@ -291,22 +291,24 @@ Example (NOTICE: Files block + tests as separate checklist items):
 
 ### task model selection
 
-every task gets a `**Model:** <model> — <reason>` line right after its `### Task N:` header. `/planning:exec` runs the task's subagent on that model. pick it from what the task actually requires, using observable signals, not a general sense of difficulty:
+every task gets a `**Model:** <model> — <reason>` line right after its `### Task N:` header. `/planning:exec` runs the task's subagent on that model. the subagent works alone: fresh context, nobody to ask, it must finish the task, get tests green and commit. pick the model from what that subagent has to decide and how a mistake would surface — not from how big or hard the task sounds. size alone is not a signal: a 10-file rename is haiku, a 1-file lock fix is opus.
 
-- **default: `sonnet`** — move off it only on the signals below.
+- **default: `sonnet`** — the plan settles what to build and tests show whether it works. move off it only on the signals below.
 - **`opus` if ANY of these apply:**
-  - async flows, cancellation, races, concurrency, retries/backoff
-  - defines or changes a public API or contract that later tasks in this plan build on
-  - requires a judgment call the plan does not settle (choice of approach, non-obvious debugging)
-  - shared logic across 4+ files, or a change to the data model or its persistence
-  - security, auth, input validation, error handling of external APIs
+  - the task makes a decision the plan leaves open: choose an approach, design a schema/interface/layout, find a bug's root cause, find where time goes
+  - later tasks build on what it defines: public API, data model, schema or data migration, config/file format, an interface others implement
+  - a mistake would pass its own checks: concurrency and ordering, security and auth boundaries, irreversible data transforms or deletes, infra touching live resources (permissions, networking, production config)
+  - it changes behavior shared by callers across several modules that must stay consistent
 - **`haiku` only if ALL of these apply:**
-  - mechanical work: rename, move, docs, config, applying an existing pattern
-  - no new logic, or logic copied from an existing example in the codebase
-  - 1-2 files; tests absent or following an existing test verbatim
-- **conflicting signals** → pick the higher model.
+  - the plan spells out the exact change: rename, move, version bump, config value, a pattern already present in the repo, docs restating the plan
+  - nothing left to decide or design
+  - a mistake fails loudly: build, lint, tests or a grep catch it
+- **non-code tasks** use the same signals: a design doc or ADR choosing between options is opus; docs describing built behavior are sonnet; test-only tasks are sonnet, haiku when adding cases to an existing table.
+- **conflicting signals** → pick the higher model. still unsure → ask "if the model gets this wrong, will a check fail?" yes → lower, no → higher. exec escalates only when a task is left unfinished; a wrong but green result is marked done and never retried.
+- if more than half the tasks come out opus, the plan leaves too much undecided — settle those decisions in the plan instead.
+- `fable` is never picked by this rubric, only when the user asks for it on a specific task.
 - the reason is one short phrase naming the signal that decided it, so the user can check the choice.
-- project conventions (CLAUDE.md, custom planning rules) may shift the rubric, e.g. "anything touching X is opus" — follow them.
+- project conventions (CLAUDE.md, custom planning rules) may shift the rubric, e.g. "anything touching billing is opus" — follow them.
 
 ## step 3: next steps
 
