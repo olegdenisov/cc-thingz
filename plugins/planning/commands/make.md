@@ -206,6 +206,7 @@ Task structure guidelines:
 - Each task = ONE logical unit (one function, one endpoint, one component)
 - Use specific descriptive names, not generic "[Core Logic]" or "[Implementation]"
 - Each task MUST have a **Files:** block listing files to Create/Modify (before checkboxes)
+- Each task MUST have a **Model:** line right after its header, picked by the "task model selection" rubric (see below the template)
 - Aim for ~5 checkboxes per task (more is OK if logically atomic)
 - **CRITICAL: number ALL tasks with concrete sequential integers** - the two trailing tasks below are shown as "Task N-1" and "Task N" where N is a PLACEHOLDER for the total task count, NOT literal text. Substitute real numbers continuing the sequence from your last implementation task (e.g. with 14 implementation tasks they become "Task 15: Verify acceptance criteria" and "Task 16: ... Update documentation"). NEVER write the literal strings "Task N-1" or "Task N" into the plan.
 - **CRITICAL: Each task MUST end with writing/updating tests before moving to next**
@@ -218,6 +219,7 @@ Task structure guidelines:
 Example (NOTICE: Files block + tests as separate checklist items):
 
 ### Task 1: Add password hashing utility
+**Model:** sonnet — new utility with tests, clear spec
 
 **Files:**
 - Create: `src/auth/hash`
@@ -230,6 +232,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 - [ ] run tests - must pass before task 2
 
 ### Task 2: Add user registration endpoint
+**Model:** opus — auth-sensitive input handling, public API later tasks build on
 
 **Files:**
 - Create: `src/api/users`
@@ -245,6 +248,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 -->
 
 ### Task 1: [specific name - what this task accomplishes]
+**Model:** [haiku / sonnet / opus] — [one-phrase reason from the rubric]
 
 **Files:**
 - Create: `exact/path/to/new_file`
@@ -258,6 +262,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 
 <!-- replace "N-1" and "N" below with the actual next sequential numbers continuing from your last implementation task - do NOT emit the literal letter N -->
 ### Task N-1: Verify acceptance criteria
+**Model:** sonnet — acceptance check needs care
 - [ ] verify all requirements from Overview are implemented
 - [ ] verify edge cases are handled
 - [ ] run full test suite: `<project test command>`
@@ -265,6 +270,7 @@ Example (NOTICE: Files block + tests as separate checklist items):
 - [ ] verify test coverage meets project standard
 
 ### Task N: [Final] Update documentation
+**Model:** sonnet — docs must match what was actually built
 - [ ] update README.md if needed
 - [ ] update CLAUDE.md if new patterns discovered
 - [ ] move this plan to `docs/plans/completed/`
@@ -283,9 +289,28 @@ Example (NOTICE: Files block + tests as separate checklist items):
 - third-party service integrations to verify
 ```
 
+### task model selection
+
+every task gets a `**Model:** <model> — <reason>` line right after its `### Task N:` header. `/planning:exec` runs the task's subagent on that model. pick it from what the task actually requires, using observable signals, not a general sense of difficulty:
+
+- **default: `sonnet`** — move off it only on the signals below.
+- **`opus` if ANY of these apply:**
+  - async flows, cancellation, races, concurrency, retries/backoff
+  - defines or changes a public API or contract that later tasks in this plan build on
+  - requires a judgment call the plan does not settle (choice of approach, non-obvious debugging)
+  - shared logic across 4+ files, or a change to the data model or its persistence
+  - security, auth, input validation, error handling of external APIs
+- **`haiku` only if ALL of these apply:**
+  - mechanical work: rename, move, docs, config, applying an existing pattern
+  - no new logic, or logic copied from an existing example in the codebase
+  - 1-2 files; tests absent or following an existing test verbatim
+- **conflicting signals** → pick the higher model.
+- the reason is one short phrase naming the signal that decided it, so the user can check the choice.
+- project conventions (CLAUDE.md, custom planning rules) may shift the rubric, e.g. "anything touching X is opus" — follow them.
+
 ## step 3: next steps
 
-after creating the file, tell user: "created plan: `docs/plans/yyyymmdd-<task-name>.md`"
+after creating the file, tell user: "created plan: `docs/plans/yyyymmdd-<task-name>.md`", followed by a compact task → model summary, one line per task (e.g. `Task 3: Retry polling — opus (async cancel)`), so the user can adjust `**Model:**` lines before execution.
 
 then use AskUserQuestion:
 
@@ -341,7 +366,7 @@ then use AskUserQuestion:
     }]
   }
   ```
-  - **Interactive**: begin implementing task 1 interactively in this session. Use TodoWrite tool to track progress and mark todos completed immediately (do not batch)
+  - **Interactive**: begin implementing task 1 interactively in this session (`**Model:**` lines are ignored — the session's model does the work). Use TodoWrite tool to track progress and mark todos completed immediately (do not batch)
   - **Autonomous**: invoke `/planning:exec <plan-file-path>` for autonomous execution with multi-phase review
 - **Done**: commit plan with message like "docs: add <topic> implementation plan", stop
 

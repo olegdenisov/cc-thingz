@@ -106,7 +106,7 @@ In BOTH cases: invoke the AskUserQuestion tool **now**, do not generate text fir
 ALWAYS create tasks using TaskCreate before starting any work. Create one task per plan Task section plus review phases:
 
 For each `### Task N:` section in the plan:
-- `TaskCreate(subject="Task N: <title>", description="<checkbox items>", activeForm="Executing task N...")`
+- `TaskCreate(subject="Task N: <title>", description="<checkbox items>", activeForm="Executing task N...")` — when the task has a `**Model:**` line (see Step 6), append ` [<model>]` to the subject
 
 Then add review tasks:
 - `TaskCreate(subject="Review phase 1: comprehensive", description="5 parallel review agents + fixer", activeForm="Running review phase 1...")`
@@ -143,23 +143,26 @@ Repeat until no `[ ]` checkboxes remain in any Task section:
 1. **Re-read the plan file** (subagent modifies it each iteration)
 2. **Find the first Task section** (`### Task N:` or `### Iteration N:`) that still has `[ ]` checkboxes
 3. **If none found** — all tasks complete, go to step 7
-4. **Announce the task to the user** — before spawning the subagent, output a visible summary:
-   - Task number and title (from the `### Task N:` header)
+4. **Resolve the task model** — look for a `**Model:** <model>` line in that task section (the planner puts it right after the header; anything after the model word is the reason). Take the first word, lowercased. Valid values: `haiku`, `sonnet`, `opus`, `fable`. If the line is missing or the value is not valid, the task has no model — spawn without `model` so it runs on the session's model, and for an invalid value tell the user it was ignored.
+5. **Announce the task to the user** — before spawning the subagent, output a visible summary:
+   - Task number, title (from the `### Task N:` header) and the resolved model, or `session model` when none
    - List all `[ ]` checkbox items in that task section
    - Example output:
      ```
-     --- Task 1: Fix error handling ---
+     --- Task 1: Fix error handling [sonnet] ---
      - [ ] Handle the error from os.ReadFile
      - [ ] Either log and exit or handle gracefully
      ```
-5. **Spawn a subagent** using Agent tool with:
+6. **Spawn a subagent** using Agent tool with:
    - `mode: "bypassPermissions"`
    - `subagent_type: "general-purpose"`
+   - `model: "<model>"` — only when step 4 resolved one
    - The task prompt from `prompts/task.md`, with all placeholders substituted as described in the Placeholder Substitution section above (including `USER_RULES`)
-6. **After subagent returns**, re-read the plan file and check if that task's checkboxes are now `[x]`
+7. **After subagent returns**, re-read the plan file and check if that task's checkboxes are now `[x]`
    - If yes — task succeeded, continue loop
    - If no — **retry** with a fresh subagent for the same task up to `task_retries` times (userConfig, default: 1). If all retries fail, stop and report failure to user
-7. **Report to user**: "Task N completed" (one line). The task subagent logs details to the progress file.
+   - **Escalate the model on retry**: each retry moves one step up `haiku` → `sonnet` → `opus`; `opus` and `fable` stay as they are; a task with no model stays on the session's model. Announce the change (`retrying Task N on opus (was sonnet)`) and log it via `append-progress.sh` as `[deviation] task N: retried on <new> instead of <old> — <old> did not complete the task`, so the completion report shows which model choices did not hold
+8. **Report to user**: "Task N completed" (one line). The task subagent logs details to the progress file.
 
 CRITICAL: Spawn exactly ONE task subagent per iteration and WAIT for it to return before starting the next. NEVER batch-spawn multiple task subagents in a single message. Plan tasks are ordered and interdependent — later tasks build on the files earlier tasks create, and every task subagent edits the same plan-file checkboxes and overlapping source files, so running them in parallel corrupts the plan and the working tree. The "launch in a single message for parallel execution" instruction applies ONLY to the review phases (steps 7 and 10), never to this task loop.
 
