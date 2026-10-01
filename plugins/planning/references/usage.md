@@ -71,6 +71,9 @@ and what an override commits you to, are in the **Customization** paragraph of t
 https://github.com/umputun/cc-thingz#planning — kept there because both plugin paths have to be spelled out
 literally, and only the README carries that form. That paragraph is authoritative; do not restate it here.
 
+Subagent prompts are rendered to files in a per-run directory (`init-prompt-dir.sh`) by `render-prompt.sh` and handed to the
+subagent as a path, not pasted into the Agent call; review findings go to a file there too.
+
 ### Customization patterns
 
 - *Route review fanout to named specialists.* Override `prompts/review.md` to launch named subagents (`qa-expert`, `code-quality`, `go-test-expert`, `implementation-reviewer`, `documentation`) instead of `general-purpose`.

@@ -1,6 +1,6 @@
 # Finalize prompt
 
-Use this for the finalize agent after all reviews pass (replace `DEFAULT_BRANCH`, `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, and `${CLAUDE_PLUGIN_ROOT}`):
+Rendered to a file by `render-prompt.sh` for the finalize agent after all reviews pass (it replaces `DEFAULT_BRANCH`, `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, and `${CLAUDE_PLUGIN_ROOT}`):
 
 ```
 Post-completion finalize step. Organize commits for merge.

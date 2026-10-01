@@ -1,6 +1,6 @@
 # Stats summary prompt
 
-Use this for the stats agent after finalize completes (replace `DEFAULT_BRANCH` and `PROGRESS_FILE_PATH`):
+Rendered to a file by `render-prompt.sh` for the stats agent after finalize completes (it replaces `DEFAULT_BRANCH` and `PROGRESS_FILE_PATH`):
 
 ```
 You are a stats-summary agent for a /planning:exec run that just finished. Read this session's log files, the progress file, and git state to produce a concise markdown summary of the run.

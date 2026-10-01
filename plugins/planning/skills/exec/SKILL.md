@@ -14,28 +14,42 @@ Execute plan file tasks sequentially, each in an isolated subagent.
 
 ## File Resolution
 
-ALWAYS use the resolve script to read prompt and agent files. NEVER construct the override chain manually:
+Prompt and agent files live behind a three-layer override chain (project, user, bundled). NEVER construct the chain manually — two scripts walk it for you:
+
+- `render-prompt.sh` — for everything that becomes a **subagent prompt** (`prompts/task.md`, `prompts/fixer.md`, `prompts/finalizer.md`, `prompts/stats.md`, `agents/*.txt`). It resolves the file, substitutes the placeholders and writes the ready prompt to a file. See "Subagent prompts are files" below.
+- `resolve-file.sh` — only for files YOU read: the `prompts/review.md` playbook and `prompts/codex-review.md`.
+  ```
+  bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/resolve-file.sh prompts/review.md '${CLAUDE_PLUGIN_DATA}'
+  ```
+
+### Subagent prompts are files
+
+NEVER read a subagent prompt file into this session and NEVER write a prompt's text into an Agent call. Every character you put into an Agent `prompt` is generated as output and then stays in this session's context for the rest of the run. Render the prompt to a file instead and hand the subagent the path:
+
 ```
-bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/resolve-file.sh prompts/task.md ${CLAUDE_PLUGIN_DATA}
-bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/resolve-file.sh agents/quality.txt ${CLAUDE_PLUGIN_DATA}
+bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh <relative-path> <out-file> '${CLAUDE_PLUGIN_DATA}' [--preamble <relative-path>]... [KEY=VALUE | KEY=@file]...
 ```
-The script checks project overrides, user overrides, and bundled defaults automatically.
 
-### Placeholder Substitution
+- `<out-file>` goes into the prompt directory `PROMPT_DIR`, created fresh for this run in Step 5; the script prints the path it wrote
+- `KEY=VALUE` replaces the placeholder `KEY` with a literal value: `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, `DEFAULT_BRANCH`, `DIFF_COMMAND`. Quote each pair. The `KEY` part is literal — it names the placeholder; only the `<...>` value is yours to fill in
+- `DIFF_COMMAND` for review agents is `git diff <default-branch>...HEAD` in a git repo and `hg diff -r 'ancestor(., <default-branch>)'` in an hg repo (detect with `detect-vcs.sh`). The hg form holds single quotes, so that pair is always double-quoted: `"DIFF_COMMAND=<diff-command>"`
+- `KEY=@file` replaces the placeholder with the content of a file: `FINDINGS_LIST=@<findings-file>`. The file must exist — the script fails otherwise, so a wrong path cannot turn into an empty findings list
+- `USER_RULES` is filled by the script from the custom rules file (see Custom Rules Loading)
+- `${CLAUDE_PLUGIN_ROOT}` is substituted by the script itself — subagents run in fresh contexts without plugin env vars
+- the script exits non-zero and names the placeholder when one is left unresolved; fix the command and re-run, never spawn a subagent on a failed render
+- in the commands below `PROMPT_DIR` and `FINDINGS_FILE` stand for the actual paths — never run a command with those words left in it
 
-After reading a prompt file, replace ALL placeholders with actual values before passing to a subagent. Subagents run in fresh contexts without plugin env vars.
+The `prompt` of the Agent call is then ONLY this launch line, with the rendered path filled in:
 
-Always substitute: `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, `DEFAULT_BRANCH`, `${CLAUDE_PLUGIN_ROOT}` (resolve to actual absolute path), `RESOLVE_SCRIPT` (absolute path to `${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/resolve-file.sh`), `PLUGIN_DATA_DIR` (resolved `${CLAUDE_PLUGIN_DATA}` path — passed as second argument to resolve-file.sh so it can find user overrides), `USER_RULES` (resolved custom rules content from the rules loading step, or empty string if no rules found), and phase-specific values (`FINDINGS_LIST`, `REVIEW_PHASE`, `DIFF_COMMAND`).
+```
+Read the file <rendered-path> in full and follow it exactly — it is your complete prompt. Do not start any work before reading it.
+```
+
+Add nothing to it except what a step below explicitly allows (the error details on a task retry).
 
 ## Custom Rules Loading
 
-Before starting execution, run this command via Bash tool to check for user-provided custom rules:
-
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-rules.sh planning-rules.md ${CLAUDE_PLUGIN_DATA}
-```
-
-If the output is non-empty, store it as the resolved custom rules content. When substituting `USER_RULES` in task prompts, wrap the content with a label so the subagent understands it: use "ADDITIONAL CUSTOM RULES:\n<content>" as the substitution. If the output is empty, substitute an empty string for `USER_RULES`. See `${CLAUDE_PLUGIN_ROOT}/references/custom-rules.md` for full documentation on the rules mechanism.
+User-provided custom rules (`planning-rules.md`, see `${CLAUDE_PLUGIN_ROOT}/references/custom-rules.md`) need no step of yours: `render-prompt.sh` resolves them itself and substitutes them, labelled, for `USER_RULES` in the task prompt. Do not resolve or print the rules in this session.
 
 ## Process
 
@@ -136,6 +150,18 @@ Initialize the progress file: `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/in
 
 IMPORTANT: Always use `${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh` to write to the progress file after initialization. Never write directly.
 
+Then create the prompt directory for this run and remember the path it prints as `PROMPT_DIR` (a new directory every run, so nothing is left over from an earlier run of the same plan):
+
+```
+bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/init-prompt-dir.sh <plan-name>
+```
+
+Render the task prompt ONCE — it is identical for every task, because the subagent finds the first unfinished Task section itself:
+
+```
+bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh prompts/task.md PROMPT_DIR/task.md '${CLAUDE_PLUGIN_DATA}' 'PLAN_FILE_PATH=<plan-file-path>' 'PROGRESS_FILE_PATH=<progress-file>'
+```
+
 ### Step 6. Task loop
 
 Repeat until no `[ ]` checkboxes remain in any Task section:
@@ -157,10 +183,10 @@ Repeat until no `[ ]` checkboxes remain in any Task section:
    - `mode: "bypassPermissions"`
    - `subagent_type: "general-purpose"`
    - `model: "<model>"` — only when step 4 resolved one
-   - The task prompt from `prompts/task.md`, with all placeholders substituted as described in the Placeholder Substitution section above (including `USER_RULES`)
+   - `prompt`: the launch line from "Subagent prompts are files" pointing at `PROMPT_DIR/task.md` (rendered in Step 5) — the same file for every task; do not render it again and do not paste task text, checkbox items or plan excerpts into the prompt
 7. **After subagent returns**, re-read the plan file and check if that task's checkboxes are now `[x]`
    - If yes — task succeeded, continue loop
-   - If no — **retry** with a fresh subagent for the same task up to `task_retries` times (userConfig, default: 1). If all retries fail, stop and report failure to user
+   - If no — **retry** with a fresh subagent for the same task up to `task_retries` times (userConfig, default: 1). If all retries fail, stop and report failure to user. A retry uses the same launch line; when the failed subagent left concrete errors (compiler, test, lint), append them after the launch line under "Previous attempt failed with:" — that is the only text allowed besides the launch line
    - **Escalate the model on retry**: each retry moves one step up `haiku` → `sonnet` → `opus`; `opus` and `fable` stay as they are; a task with no model stays on the session's model. Announce the change (`retrying Task N on opus (was sonnet)`) and log it via `append-progress.sh` as `[deviation] task N: retried on <new> instead of <old> — <old> did not complete the task`, so the completion report shows which model choices did not hold
 8. **Report to user**: "Task N completed" (one line). The task subagent logs details to the progress file.
 
@@ -180,17 +206,19 @@ Report to user: "--- Review phase 1: comprehensive ---"
 
 Loop up to `review_iterations` times (userConfig, default: 5). Track the current iteration number:
 
-1. **Read review.md as a playbook (NOT as a subagent prompt)** — resolve `prompts/review.md` through the override chain and read it from this main session. It tells YOU (the orchestrator) which specialist agents to fan out for the current `REVIEW_PHASE`. Substitute `DEFAULT_BRANCH`, `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, `${CLAUDE_PLUGIN_ROOT}`, and `REVIEW_PHASE` in the resolved content. Then follow the playbook FROM THIS SESSION: launch the specified Agent tool calls in a single message for parallel execution. Subagents do not have Agent tool access, so the fanout MUST be initiated from the main orchestrator.
+1. **Read review.md as a playbook (NOT as a subagent prompt)** — resolve `prompts/review.md` through the override chain and read it from this main session. It tells YOU (the orchestrator) which specialist agents to fan out for the current `REVIEW_PHASE`. Resolve it once per run: on later iterations and in step 10 do not resolve it again unless it is no longer in your context. Substitute `REVIEW_PHASE`, `RENDER_SCRIPT` (`${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh`), `PLUGIN_DATA_DIR` (`${CLAUDE_PLUGIN_DATA}`), `PROMPT_DIR` and `FINDINGS_FILE` (`PROMPT_DIR/findings-phase1-iter<N>.md`) in the resolved content, and fill the diff command, plan file and progress file into its render commands. If the playbook is an override written for the older flow (it calls `RESOLVE_SCRIPT` and tells you to assemble agent prompts yourself), substitute `RESOLVE_SCRIPT` with `${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/resolve-file.sh` and follow it as written; items 2-4 below still apply to its findings. Then follow the playbook FROM THIS SESSION: render the agent prompts to files and launch the specified Agent tool calls in a single message for parallel execution. Subagents do not have Agent tool access, so the fanout MUST be initiated from the main orchestrator.
    - **Iteration 1**: set `REVIEW_PHASE` to `comprehensive`. Per the playbook, launch 5 parallel review agents (quality, implementation, testing, simplification, documentation).
    - **Iteration 2 and later**: set `REVIEW_PHASE` to `critical`. Per the playbook, launch 2 parallel review agents (quality, implementation) focused on critical/major issues only. Before this iteration, report to user: "--- Review phase 1: critical re-check (iteration N) ---"
 
-2. **Collect findings** — collect findings from ALL launched review agents. Pass the COMPLETE output (not a summary) to the fixer. Do NOT summarize, filter, or dismiss any findings. ALL findings are actionable. Report to user with a short list of findings. Log to progress file:
+2. **If ALL agents reported zero issues** → report "Review phase 1: clean" and proceed to the next phase. Write no findings file and append nothing.
+
+3. **Collect findings** — collect findings from ALL launched review agents and write them ONCE, with the Write tool, to `FINDINGS_FILE` in the report format the playbook gives. Every finding of every agent goes into the file — do NOT summarize, filter, or dismiss any. ALL findings are actionable. The file is the single copy: the progress log and the fixer both read it, so never repeat the full findings in a Bash command or in an Agent prompt. To the user, report a short list — one line per finding, `file:line` and a few words each, not the full description — followed by the path of the file. Log to progress file:
    `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file> "review phase 1: findings"`
-   Then pipe: `echo "<findings>" | bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file>`
+   Then append the file: `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file> < FINDINGS_FILE`
 
-3. **If ALL agents reported zero issues** → report "Review phase 1: clean" and proceed to the next phase.
-
-4. **Spawn a fixer agent** — resolve `prompts/fixer.md` through the override chain. Launch with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`. Pass the FULL unedited review output as FINDINGS_LIST — the fixer decides what's real, not you.
+4. **Spawn a fixer agent** — render the fixer prompt with the findings file as `FINDINGS_LIST`, so the fixer gets the full unedited findings — the fixer decides what's real, not you:
+   `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh prompts/fixer.md PROMPT_DIR/fixer.md '${CLAUDE_PLUGIN_DATA}' 'PLAN_FILE_PATH=<plan-file-path>' 'PROGRESS_FILE_PATH=<progress-file>' 'FINDINGS_LIST=@FINDINGS_FILE'`
+   Launch with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"` and the launch line pointing at `PROMPT_DIR/fixer.md`.
 
 5. **After fixer returns** → show the "FIXES:" section to the user. Report "Review phase 1: iteration N fixes applied". Check for uncommitted changes: detect VCS with `vcs=$(bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/detect-vcs.sh)`, then run `git status --porcelain` for `git` or `hg status` for `hg`. If output is non-empty, show every reported path and warn that these uncommitted changes are absent from the committed branch diff used by the next review. This is report-only: do not retry, abort, or commit leftovers because of this check. Loop back to step 1.
 
@@ -202,15 +230,17 @@ Report to user: "--- Review phase 2: code smells analysis ---"
 
 Run once (no loop):
 
-1. **Spawn a smells agent** — resolve `agents/smells.txt` through the override chain. Launch one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the resolved agent prompt.
+1. **Spawn a smells agent** — render its prompt with the smells preamble (read-only rule, diff command, plan file):
+   `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh agents/smells.txt PROMPT_DIR/review-smells.md '${CLAUDE_PLUGIN_DATA}' --preamble prompts/smells-preamble.md "DIFF_COMMAND=<diff-command>" 'PLAN_FILE_PATH=<plan-file-path>'`
+   Launch one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the launch line pointing at `PROMPT_DIR/review-smells.md`.
 
-2. **Collect findings** — after the agent returns, report to user with a compact list of findings (one line per finding). Log findings to progress file:
+2. **If no issues found** → report "Smells analysis: clean" and proceed to the next phase. Write no findings file and append nothing.
+
+3. **Collect findings** — write the agent's full findings ONCE, with the Write tool, to `PROMPT_DIR/findings-phase2.md`. To the user, report a short list — one line per finding, `file:line` and a few words each, not the full description — followed by the path of the file. Log findings to progress file:
    `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file> "review phase 2: findings"`
-   Then pipe the findings: `echo "<findings>" | bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file>`
+   Then append the file: `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/append-progress.sh <progress-file> < PROMPT_DIR/findings-phase2.md`
 
-3. **If no issues found** → report "Smells analysis: clean" and proceed to the next phase.
-
-4. **Spawn a fixer agent** — resolve `prompts/fixer.md` through the override chain. Launch with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`. Pass the FULL smells output as FINDINGS_LIST.
+4. **Spawn a fixer agent** — render and launch it exactly as in step 7 item 4, with `FINDINGS_LIST=@PROMPT_DIR/findings-phase2.md`, so the fixer gets the FULL smells output.
 
 5. **After fixer returns** → report fixes to user. Check for uncommitted changes: detect VCS with `vcs=$(bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/detect-vcs.sh)`, then run `git status --porcelain` for `git` or `hg status` for `hg`. If output is non-empty, show every reported path and warn that these uncommitted changes are absent from the committed branch diff used by the next review. This is report-only: do not retry, abort, or commit leftovers because of this check. Proceed to the next phase.
 
@@ -242,7 +272,7 @@ Loop up to `external_review_iterations` times (userConfig, default: 10):
 
 5. **Report findings to user** — show a compact list (one line per finding).
 
-6. **Spawn a fixer agent** — same as other review phases, with `description: "Fixer - external review"` so the stats phase can group this run under review phase 3. Resolve `prompts/fixer.md`, pass the reviewer output as FINDINGS_LIST. Fixer verifies, fixes, commits, reports FIXES.
+6. **Spawn a fixer agent** — same as other review phases, with `description: "Fixer - external review"` so the stats phase can group this run under review phase 3. Write the reviewer output unedited, with the Write tool, to `PROMPT_DIR/findings-phase3-iter<N>.md`, then render and launch the fixer as in step 7 item 4 with that file as `FINDINGS_LIST`. Fixer verifies, fixes, commits, reports FIXES.
 
 7. **Report fixer results to user** - show FIXES section. Log to progress file. Check for uncommitted changes: detect VCS with `vcs=$(bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/detect-vcs.sh)`, then run `git status --porcelain` for `git` or `hg status` for `hg`. If output is non-empty, show every reported path and warn that these uncommitted changes are absent from the committed branch diff used by the next review. This is report-only: do not retry, abort, or commit leftovers because of this check.
 
@@ -256,7 +286,7 @@ If `external_review_iterations` reached with critical/major issues still found, 
 
 Report to user: "--- Review phase 4: critical/major only (single pass) ---"
 
-Same structure as step 7 but with `REVIEW_PHASE` set to `critical`. Resolve `prompts/review.md` and follow its playbook FROM THIS MAIN SESSION — launch 2 parallel review agents (quality, implementation) focusing on critical/major issues only. Subagents do not have Agent tool access, so the fanout MUST be initiated from the main orchestrator. Same fixer flow — pass findings to fixer, show FIXES to user.
+Same structure as step 7 but with `REVIEW_PHASE` set to `critical` and `FINDINGS_FILE` set to `PROMPT_DIR/findings-phase4.md`. Follow the `prompts/review.md` playbook (in your context from step 7; resolve it again only if it no longer is) FROM THIS MAIN SESSION — launch 2 parallel review agents (quality, implementation) focusing on critical/major issues only. Subagents do not have Agent tool access, so the fanout MUST be initiated from the main orchestrator. Same fixer flow — findings file to the fixer render, show FIXES to user.
 
 ### Step 11. Finalize
 
@@ -268,13 +298,13 @@ After all reviews pass, rebase and clean up commits.
 
 Report to user: "--- Finalize: rebase and clean up commits ---"
 
-Spawn one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the prompt from `prompts/finalizer.md`. Replace `DEFAULT_BRANCH`, `PLAN_FILE_PATH`, and `PROGRESS_FILE_PATH`.
+Render the prompt: `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh prompts/finalizer.md PROMPT_DIR/finalizer.md '${CLAUDE_PLUGIN_DATA}' 'DEFAULT_BRANCH=<default-branch>' 'PLAN_FILE_PATH=<plan-file-path>' 'PROGRESS_FILE_PATH=<progress-file>'`. Spawn one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the launch line pointing at `PROMPT_DIR/finalizer.md`.
 
 This is best-effort — if rebase fails, report the issue but don't block completion.
 
 ### Step 12. Stats summary
 
-After finalize (or after step 11 was skipped on hg/disabled), spawn one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the prompt from `prompts/stats.md`. Replace `DEFAULT_BRANCH` and `PROGRESS_FILE_PATH` in the resolved content.
+After finalize (or after step 11 was skipped on hg/disabled), render the prompt: `bash ${CLAUDE_PLUGIN_ROOT}/skills/exec/scripts/render-prompt.sh prompts/stats.md PROMPT_DIR/stats.md '${CLAUDE_PLUGIN_DATA}' 'DEFAULT_BRANCH=<default-branch>' 'PROGRESS_FILE_PATH=<progress-file>'`. Then spawn one Agent tool call with `mode: "bypassPermissions"`, `subagent_type: "general-purpose"`, and the launch line pointing at `PROMPT_DIR/stats.md`.
 
 The stats agent reads this session's main log + subagent logs from `~/.claude/projects/<cwd-encoded>/`, aggregates per-phase token/duration/tool-use counts, runs `git diff --shortstat DEFAULT_BRANCH...HEAD` for branch churn, and returns a compact markdown report.
 
@@ -296,14 +326,14 @@ When stats summary is done (or skipped on failure):
 - Parent session only tracks: task number, success/failure, retry count
 - Plan file is the single source of truth for progress — always re-read it
 - No signals — just checkboxes in the plan for task progress
-- Maintain progress file (`/tmp/progress-<plan-name>.txt`) — see `prompts/progress-file.md` for format and when to write
+- Maintain progress file (`/tmp/progress-<plan-name>.txt`) through `append-progress.sh` at the points the steps above name
 - Do not modify the plan file yourself during the task, review, and finalize phases — only subagents modify it. The sole exception is the terminal move in step 13 (after all phases finish), which the orchestrator performs via `move-plan.sh`
 - Do not implement or fix code yourself — only subagents implement and fix
 - If a subagent fails or leaves broken code, re-run the loop — do NOT investigate or fix it yourself
 - NEVER dismiss findings as "pre-existing", "not from changes", or "architectural" — ALL findings are actionable
-- NEVER summarize or filter agent findings — pass the full output to the fixer agent verbatim
+- NEVER summarize or filter agent findings — the findings file handed to the fixer carries every finding
 - All prompt and agent files MUST be resolved through the three-layer override chain before use
 - All `subagent_type` values must be `general-purpose` — agent files provide the specialized prompt
-- After reading a prompt file, substitute all placeholders before passing to subagent (see Placeholder Substitution)
+- Subagent prompts are rendered to files by `render-prompt.sh`; an Agent `prompt` is only the launch line with the rendered path (see "Subagent prompts are files") — never the prompt text, the findings, or plan excerpts
 - Subagents run with NO human available — they must NEVER ask the user a question (no AskUserQuestion, no pausing for input). They decide judgment calls the plan does not settle from the project's lint rules, CLAUDE.md, and code conventions, and log each as a `[decision]`/`[deviation]` line for the completion report
 - In worktree mode (`worktree_mode = true`) the main working directory is never touched — no branch is created or checked out there and no changes land there; all git operations run inside the worktree, and Step 4's create-branch.sh is skipped
