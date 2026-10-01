@@ -284,8 +284,15 @@ bash "$PLUGIN_ROOT/skills/exec/scripts/customize-file.sh" prompts/review.md "$PL
 ```
 An override shadows the bundled default permanently and will not pick up changes from later plugin upgrades, so copy only the files you intend to edit. Delete the override to return to the bundled version.
 
-Bundled prompts: `task.md`, `fixer.md`, `review.md`, `codex-review.md`, `finalizer.md`, `stats.md`, `progress-file.md`
+Bundled prompts: `task.md`, `fixer.md`, `review.md`, `review-preamble.md`, `review-critical.md`, `smells-preamble.md`, `codex-review.md`, `finalizer.md`, `stats.md`, `progress-file.md`
 Bundled agents: `quality.txt`, `implementation.txt`, `testing.txt`, `simplification.txt`, `documentation.txt`, `smells.txt`
+
+**Prompts are passed as files** — the orchestrator never pastes a prompt into an Agent call. `render-prompt.sh` resolves a prompt or agent file through the override chain, substitutes the placeholders (`PLAN_FILE_PATH`, `PROGRESS_FILE_PATH`, `DEFAULT_BRANCH`, `DIFF_COMMAND`, `USER_RULES`, `FINDINGS_LIST`, `${CLAUDE_PLUGIN_ROOT}`) and writes the result into a directory created fresh for each run by `init-prompt-dir.sh` (`$TMPDIR/exec-prompts-<plan-name>.XXXXXX`); the subagent is told only to read that file. Review findings are likewise written once to a file there, which both the progress log and the fixer read. This keeps prompt and findings text out of the orchestrator's output and context, where it would be paid for on every later turn.
+
+What this means for overrides:
+- A `prompts/` file in the bundled wrapper shape is unwrapped: first line a `# ` heading, then either a `## Prompt` line (the body is everything after it) or a code fence that opens within the first few lines and closes on the last non-blank line (the body is the text between them). Any other file, including every `agents/*.txt`, is used whole — so a hand-written override may start with a heading and contain code samples.
+- Review agents get `prompts/review-preamble.md` (plus `prompts/review-critical.md` in critical-only mode) prepended to their `agents/*.txt` file, and the smells agent gets `prompts/smells-preamble.md`. Override those files to change what every reviewer is told.
+- A `prompts/review.md` override written before planning 3.11 still works — the orchestrator follows it as written — but it assembles agent prompts inline and so forgoes the saving. Re-copy it with `customize-file.sh` and re-apply your edits to get the file-based fanout.
 
 **Customization patterns** — two common shapes:
 

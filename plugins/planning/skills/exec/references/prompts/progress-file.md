@@ -33,7 +33,7 @@ Started: <timestamp>
 **After review agents return (before fixer):**
 ```
 [review] iteration N findings:
-<full agent output pasted here>
+<the findings file, appended with `append-progress.sh <progress-file> < <findings-file>`>
 ```
 
 **After fixer completes:**
@@ -56,6 +56,5 @@ Completed: <timestamp>
 
 ## How to pass it
 
-- Pass the progress file path to the fixer agent prompt — add it after the plan file reference
-- Review agents do NOT need the progress file (they look at repository state)
-- The fixer uses it to understand what previous iterations found and fixed
+- The progress file path reaches subagents through the `PROGRESS_FILE_PATH` placeholder, filled by `render-prompt.sh`
+- Review agents read it for context on previous iterations; the fixer reads it to see what earlier iterations found and fixed

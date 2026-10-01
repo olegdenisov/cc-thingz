@@ -1,6 +1,6 @@
 # Fixer prompt
 
-Use this for the fixer agent after collecting review findings (replace `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH` and `FINDINGS_LIST`):
+Use this for the fixer agent after collecting review findings (rendered to a file by `render-prompt.sh`, which replaces `PLAN_FILE_PATH`, `PROGRESS_FILE_PATH` and takes `FINDINGS_LIST` from the findings file):
 
 ```
 Code review found the following issues. Verify and fix them.
